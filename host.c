@@ -3,9 +3,11 @@
 #include <string.h>
 #include <stdint.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
 
 #define MAXDATASIZE 512
 #define SYNC 0xdcc023c2
+#define LISTENQUEUESIZE 5
 
 typedef struct packet
 {
@@ -44,7 +46,9 @@ int main(int argc, char* argv[])
 		}
 	}
 
-	int socketFD;
+	int socketFD, portNum;
+	struct sockaddr_in serv_addr, client_addr;
+	char *input, *output;
 
 	socketFD = socket(AF_INET, SOCK_STREAM, 0);
 	if(socketFD < 0)
@@ -53,6 +57,29 @@ int main(int argc, char* argv[])
 		exit(1);
 	}
 
+	if(strcmp(argv[1], "-s") == 0) // Se é servidor.
+	{
+		portNum = atoi(argv[2]);
+		bzero((char*) &serv_addr, sizeof(serv_addr));
+		serv_addr.sin_family = AF_INET;
+		serv_addr.sin_port = htons(portNum);
+		serv_addr.sin_addr.s_addr = INADDR_ANY;
+
+		if(bind(socketFD, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
+		{
+			fprintf(stderr, "ERROR on binding\n");
+			exit(1);
+		}
+
+		// Fala para o socket "escutar" LISTENQUEUESIZE conexões,
+		// inserindo elas em uma fila até que o accept() aceite a 
+		// conexão.
+		listen(socketFD, LISTENQUEUESIZE);
+
+	}
+	else if(strcmp(argv[1], "-c") == 0) // Se é cliente.
+	{
+	}
 
 	return 0;
 }
