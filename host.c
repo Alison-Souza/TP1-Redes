@@ -127,7 +127,7 @@ int main(int argc, char* argv[])
 		port = strtok(NULL, " ");
 		
 		portNum = atoi(port);
-		//local ou remote?????
+		//local ou remote????
 		memset((char*) &local_addr, '\0', sizeof(local_addr));
 		local_addr.sin_family = AF_INET;
 		local_addr.sin_port = htons(portNum);
