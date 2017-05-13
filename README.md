@@ -19,7 +19,7 @@ Trabalho Prático 1 da disciplina Redes: DCCNET Camada de Enlace
 
 ** FLAGS:	
 
-**      bit 7	 --> ACK
+**			bit 7	 --> ACK
 
 **			bit 6	 --> END
 
