@@ -10,7 +10,6 @@
 
 #define MAXDATASIZE 512
 #define SYNC 0xdcc023c2
-#define LISTENQUEUESIZE 5
 
 typedef enum {false, true} bool;
 
@@ -121,23 +120,27 @@ int main(int argc, char* argv[])
 		local_addr.sin_addr.s_addr = INADDR_ANY;
 
 		// Inicia abertura passiva.
-		if(bind(socketFD, (struct sockaddr *) &local_addr, sizeof(local_addr)) < 0)
+		if(bind(socketFD, (struct sockaddr *) &local_addr, sizeof(struct sockaddr)) < 0)
 		{
-			fprintf(stderr, "ERROR on binding\n");
+			fprintf(stderr, "ERROR on binding.\n");
 			exit(1);
 		}
 
 		// Fala para o socket "escutar" LISTENQUEUESIZE conexões,
 		// inserindo elas em uma fila até que o accept() aceite a 
 		// conexão.
-		listen(socketFD, 1);//LISTENQUEUESIZE);
+		if(listen(socketFD, 1) < 0)
+		{
+			fprintf(stderr, "ERROR on listen port.\n");
+			exit(1);
+		}
 
 		sockSize = sizeof(struct sockaddr_in);
 
 		newSocketFD = accept(socketFD, (struct sockaddr *) &remote_addr, &sockSize);
 		if(newSocketFD < 0)
 		{
-			fprintf(stderr, "ERROR on accept connection\n");
+			fprintf(stderr, "ERROR on accept connection.\n");
 			exit(1);
 		}
 	}
@@ -151,19 +154,18 @@ int main(int argc, char* argv[])
 		
 		portNum = atoi(port);
 		//local ou remote????
-		memset((char*) &local_addr, '\0', sizeof(local_addr));
+		memset((char*) &local_addr, '\0', sizeof(struct sockaddr));
 		local_addr.sin_family = AF_INET;
 		local_addr.sin_port = htons(portNum);
 		inet_pton(AF_INET, ip, &local_addr.sin_addr);
 
 		//Inicia abertura ativa.
-		if(connect(socketFD, (struct sockaddr *) &local_addr, sizeof(local_addr)) < 0);
+		if(connect(socketFD, (struct sockaddr *) &local_addr, sizeof(struct sockaddr)) < 0)
 		{
-			fprintf(stderr, "ERROR: Failed to connect.");
+			fprintf(stderr, "ERROR: Failed to connect. %s\n", strerror(errno));
 			exit(1);
 		}
 	}
-
 //***********************************************************************//
 //***********************************************************************//
 //							ENVIANDO DADOS								 //
@@ -181,7 +183,7 @@ int main(int argc, char* argv[])
 	uint8_t buffer[MAXDATASIZE];
 
 	while((blockSize = fread(buffer, sizeof(uint8_t), MAXDATASIZE, fsend)) >= 0)
-	{
+	{	printf("1\n");
 		memset(&pacote, '\0', sizeof(packet_t));
 		pacote.sync1 = htonl(SYNC);
 		pacote.sync2 = htonl(SYNC);
@@ -190,18 +192,19 @@ int main(int argc, char* argv[])
 		last_id == 1 ? (pacote.id = htons(0)) : (pacote.id = htons(1));
 		blockSize == MAXDATASIZE ? (pacote.flags = htons(0)) : (pacote.flags = htons(64)); //64 = b'0100 0000
 		memcpy(pacote.data, &buffer, blockSize);
-
+		printf("2\n");
 		pacote.chksum = htons((uint16_t) csum((unsigned short *) &pacote, sizeof(packet_t)));
-
+		printf("3\n");
 		if(send(socketFD, (packet_t *) &pacote, sizeof(packet_t), 0) < 0)
 		{
 			fprintf(stderr, "ERROR on sending file. Aborted.\n");
 			exit(1);
 		}
-
+		printf("4\n");
 		struct timeval timeout;
 		timeout.tv_sec = 1; // segundos
 		timeout.tv_usec = 0; // microsegundos
+		printf("5\n");
 		setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, (struct timeval *) &timeout, sizeof(struct timeval));
 		if(recv(socketFD, (packet_t *) &ack, sizeof(packet_t), 0) < 0)
 		{
@@ -211,6 +214,7 @@ int main(int argc, char* argv[])
 				continue;
 			}
 		}
+		printf("6\n");
 
 		ack.id = ntohs(ack.id);
 		if(ack.id != (ntohs(pacote.id)));
@@ -218,12 +222,12 @@ int main(int argc, char* argv[])
 			fseek(fsend, -blockSize, SEEK_CUR);
 			continue;
 		}
+		printf("7\n");
 
 		last_id == 1 ? (last_id = 0) : (last_id = 1);
 	}
 	printf("File sent to server");
 	fclose(fsend);
-
 //***********************************************************************//
 //***********************************************************************//
 //							RECEBENDO DADOS								 //
@@ -236,7 +240,7 @@ int main(int argc, char* argv[])
 		fclose(frecv);
 		exit(1);
 	}
-
+	printf("8\n");
 	while(1)
 	{
 		bool flag_end = false;
@@ -313,6 +317,5 @@ int main(int argc, char* argv[])
 	}
 	printf("Received from client\n");
 	fclose(frecv);
-
 	return 0;
 }
