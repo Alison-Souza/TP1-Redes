@@ -89,7 +89,7 @@ int main(int argc, char* argv[])
 //						INICIALIZANDO VARIAVEIS							 //
 //***********************************************************************//
 
-	int socketFD, newSocketFD, useSocketFD, portNum;
+	int socketFD, newSocketFD, useSocketFD, portNum, flagEND = false;
 	struct sockaddr_in local_addr, remote_addr;
 	char *input = argv[3];
 	char *output = argv[4];
@@ -188,28 +188,34 @@ int main(int argc, char* argv[])
 	int blockSize;
 	uint8_t buffer[MAXDATASIZE];
 
-	while((blockSize = fread(buffer, sizeof(uint8_t), MAXDATASIZE, fsend)) >= 0)
-	{	printf("1\n");
-		memset(&packet_send, '\0', sizeof(packet_t));
-		packet_send.sync1 = htonl(SYNC);
-		packet_send.sync2 = htonl(SYNC);
-		packet_send.chksum = htons(0);
-		packet_send.length = htons(blockSize);
-		last_id == 1 ? (packet_send.id = htons(0)) : (packet_send.id = htons(1));
-		blockSize == MAXDATASIZE ? (packet_send.flags = htons(0)) : (packet_send.flags = htons(64)); //END -> 64 = b'0100 0000
-		memcpy(packet_send.data, &buffer, blockSize);
-		printf("2\n");
-		packet_send.chksum = htons((uint16_t) csum((unsigned short *) &packet_send, sizeof(packet_t)));
-		printf("3\n");
-		printf("%s\n", buffer);
-		if(send(useSocketFD, (packet_t *) &packet_send, sizeof(packet_t), 0) < 0)
+	// Enquanto há blocos pra enviar, ou não recebeu último pacote
+	while((blockSize = fread(buffer, sizeof(uint8_t), MAXDATASIZE, fsend)) >= 0 || flagEND != true)
+	{	
+		// TRANSMISSOR COMEÇA AQUI
+		if(blockSize >= 0)
 		{
-			fprintf(stderr, "ERROR on sending file. Aborted.\n");
-			exit(1);
-		}
-		printf("4\n");
+			printf("1\n");
+			memset(&packet_send, '\0', sizeof(packet_t));
+			packet_send.sync1 = htonl(SYNC);
+			packet_send.sync2 = htonl(SYNC);
+			packet_send.chksum = htons(0);
+			packet_send.length = htons(blockSize);
+			last_id == 1 ? (packet_send.id = htons(0)) : (packet_send.id = htons(1));
+			blockSize == MAXDATASIZE ? (packet_send.flags = htons(0)) : (packet_send.flags = htons(64)); //END -> 64 = b'0100 0000
+			memcpy(packet_send.data, &buffer, blockSize);
+			printf("2\n");
+			packet_send.chksum = htons((uint16_t) csum((unsigned short *) &packet_send, sizeof(packet_t)));
+			printf("3\n");
+			printf("%s\n", buffer);
+			if(send(useSocketFD, (packet_t *) &packet_send, sizeof(packet_t), 0) < 0)
+			{
+				fprintf(stderr, "ERROR on sending file. Aborted.\n");
+				exit(1);
+			}
+			printf("4\n");
+		}	
 		// RECEPTOR COMEÇA AQUI.
-		while(true) // Enquanto não chega o ack.
+		while(flagEND != true) // Enquanto não chega o ack e tem coisa pra receber.
 		{
 			struct timeval timeout;
 			timeout.tv_sec = 1; // segundos
@@ -227,7 +233,16 @@ int main(int argc, char* argv[])
 				}
 			}
 			printf("6\n");
+			// Faz isso porque checksum é trsnformado em NBO após calculo.
+			packet_recv.chksum = ntohs(packet_recv.chksum);
+			unsigned short checksum = csum((unsigned short *)&packet_recv, sizeof(packet_t));
+			if(checksum != 0)
+			{
+				fprintf(stderr, "Checksum = %d . Invalid value to checksum. Aborted.\n", checksum);
+				exit(1);
+			}
 
+			printf("7\n");
 			packet_recv.sync1 = ntohl(packet_recv.sync1);
 			packet_recv.sync2 = ntohl(packet_recv.sync2);
 			packet_recv.chksum = ntohs(packet_recv.chksum);
@@ -240,10 +255,6 @@ int main(int argc, char* argv[])
 				fprintf(stderr, "ERROR: packet received is not syncronized\n");
 				exit(1);
 			}
-			printf("7\n");		
-		// RECEPTOR COMEÇA AQUI.
-		//while(true) // Enquanto não chega o ack.
-		//{
 			printf("8\n");
 			if(packet_recv.flags == 128 && packet_recv.length == 0) // É ack?
 			{
@@ -289,6 +300,11 @@ int main(int argc, char* argv[])
 						printf("16\n");
 						fprintf(stderr, "ERROR on write in file %s\n", output);
 						exit(1);
+					}
+
+					if(packet_recv.flags == 64) // bit END, último pacote recebido.
+					{
+						flagEND = true;
 					}
 
 					// Prepara e envia ACK.
@@ -362,25 +378,10 @@ int main(int argc, char* argv[])
 		pacote.length = ntohs(pacote.length);
 		pacote.id = ntohs(pacote.id);
 		pacote.flags = ntohs(pacote.flags);
-		if(pacote.length > 512 || pacote.length < 0)
-		{
-			fprintf(stderr, "pacote.length esta errado\n");
-			break;
-		}
+
 		if(checksum != 0)
 		{
 			fprintf(stderr, "Checksum não confere, dado corronpido\n");
-			continue;
-		}
-		if(last_id == pacote.id && last_chksum == pacote.chksum)
-		{
-			printf("Retrasmissão detectada. Reinviando confirmação\n");
-			continue;
-			//Reenvia último ACK
-		}
-		else if(last_id == pacote.id)
-		{
-			printf("ID igual ao do ultimo pacote recebido.\n");
 			continue;
 		}
 
