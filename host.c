@@ -93,7 +93,7 @@ int main(int argc, char* argv[])
 	struct sockaddr_in local_addr, remote_addr;
 	char *input = argv[3];
 	char *output = argv[4];
-	packet_t packet_send, packet_recv, pacote, ack;
+	packet_t packet_send, packet_recv, ack;
 	uint8_t last_id = 1, last_id_recv = 1;
 	uint16_t last_chksum_recv = 0;
 
@@ -208,43 +208,49 @@ int main(int argc, char* argv[])
 			exit(1);
 		}
 		printf("4\n");
-		struct timeval timeout;
-		timeout.tv_sec = 1; // segundos
-		timeout.tv_usec = 0; // microsegundos
-		printf("5\n");
-		setsockopt(useSocketFD, SOL_SOCKET, SO_RCVTIMEO, (struct timeval *) &timeout, sizeof(struct timeval));
-		if(recv(useSocketFD, (packet_t *) &packet_recv, sizeof(packet_t), 0) < 0)
-		{
-			if(errno == EAGAIN || errno == EWOULDBLOCK)
-			{
-				// PRECISA FAZER ISSO? RECV PODE GERAR QUALQUER PACOTE,
-				// NÂO APENAS ACKS.
-				fseek(fsend, -blockSize, SEEK_CUR);
-				continue;
-			}
-		}
-		printf("6\n");
-
-		packet_recv.sync1 = ntohl(packet_recv.sync1);
-		packet_recv.sync2 = ntohl(packet_recv.sync2);
-		packet_recv.chksum = ntohs(packet_recv.chksum);
-		packet_recv.length = ntohs(packet_recv.length);
-		packet_recv.id = ntohs(packet_recv.id);
-		packet_recv.flags = ntohs(packet_recv.flags);
-
-		if(packet_recv.sync1 != SYNC || packet_recv.sync2 != SYNC)
-		{
-			fprintf(stderr, "ERROR: packet received is not syncronized\n");
-			exit(1);
-		}
-		
 		// RECEPTOR COMEÇA AQUI.
 		while(true) // Enquanto não chega o ack.
 		{
+			struct timeval timeout;
+			timeout.tv_sec = 1; // segundos
+			timeout.tv_usec = 0; // microsegundos
+			printf("5\n");
+			setsockopt(useSocketFD, SOL_SOCKET, SO_RCVTIMEO, (struct timeval *) &timeout, sizeof(struct timeval));
+			if(recv(useSocketFD, (packet_t *) &packet_recv, sizeof(packet_t), 0) < 0)
+			{
+				if(errno == EAGAIN || errno == EWOULDBLOCK)
+				{
+					// PRECISA FAZER ISSO? RECV PODE GERAR QUALQUER PACOTE,
+					// NÂO APENAS ACKS.
+					fseek(fsend, -blockSize, SEEK_CUR);
+					break;//continue;
+				}
+			}
+			printf("6\n");
+
+			packet_recv.sync1 = ntohl(packet_recv.sync1);
+			packet_recv.sync2 = ntohl(packet_recv.sync2);
+			packet_recv.chksum = ntohs(packet_recv.chksum);
+			packet_recv.length = ntohs(packet_recv.length);
+			packet_recv.id = ntohs(packet_recv.id);
+			packet_recv.flags = ntohs(packet_recv.flags);
+
+			if(packet_recv.sync1 != SYNC || packet_recv.sync2 != SYNC)
+			{
+				fprintf(stderr, "ERROR: packet received is not syncronized\n");
+				exit(1);
+			}
+			printf("7\n");		
+		// RECEPTOR COMEÇA AQUI.
+		//while(true) // Enquanto não chega o ack.
+		//{
+			printf("8\n");
 			if(packet_recv.flags == 128 && packet_recv.length == 0) // É ack?
 			{
+				printf("9\n");
 				if(packet_recv.id == (ntohs(packet_send.id))) // É ack esperado?
 				{
+					printf("10\n");
 					// envia o próximo pacote, parando esse loop
 
 					// LAST_ID ALTERA AQUI???
@@ -253,6 +259,7 @@ int main(int argc, char* argv[])
 				}
 				else //Se não é o ack esperado
 				{
+					printf("11\n");
 					// Reenvia último pacote
 					fseek(fsend, -blockSize, SEEK_CUR);
 					break; //last_id NÃO deve ser alterado
@@ -260,21 +267,26 @@ int main(int argc, char* argv[])
 			}
 			else // Se não é ack.
 			{
+				printf("12\n");
 				if(packet_recv.id == last_id_recv && packet_recv.chksum == last_chksum_recv) // É o mesmo pacote anterior?
 				{
+					printf("13\n");
 					// reenvia último ack
-					if(send(useSocketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
+					if(send(useSocketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0)
 					{
-						fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
+						printf("14\n");
+						fprintf(stderr, "ERROR on resending last ack. Errno: %s\n", strerror(errno));
 						exit(1);
 					}
 				}
 				else // Se é pacote novo, escreve no arquivo e envia ack.
 				{
+					printf("15\n");
 					// Escreve no arquivo.
 					int writeSize = fwrite(packet_recv.data, sizeof(uint8_t), packet_recv.length, frecv);
-					if(writeSize < pacote.length)
+					if(writeSize < packet_recv.length)
 					{
+						printf("16\n");
 						fprintf(stderr, "ERROR on write in file %s\n", output);
 						exit(1);
 					}
@@ -290,18 +302,22 @@ int main(int argc, char* argv[])
 					memset(ack.data, '\0', MAXDATASIZE);
 
 					ack.chksum = htons((uint16_t) csum((unsigned short*) &ack, sizeof(packet_t)));
-					
+					printf("17\n");
 					if(send(useSocketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0)
 					{
-						fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
+						printf("18\n");
+						fprintf(stderr, "ERROR on sending ack. Errno: %s\n", strerror(errno));
 						exit(1);
 					}
-
+					printf("19\n");
+					last_id_recv = packet_recv.id;
 					last_chksum_recv = packet_recv.chksum;
 				}
+				printf("20\n");
 			}
+			printf("21\n");
 		}
-		printf("7\n");
+		printf("22\n");
 
 		// Tomar cuidado pra não alterar o last_id em alguns casos
 		// se der break no laço anterior.
@@ -309,7 +325,7 @@ int main(int argc, char* argv[])
 		// TALVEZ MUDAR LAST_ID APENAS DEPOIS DE RECEBER ACK.
 		//last_id == 1 ? (last_id = 0) : (last_id = 1);
 	}
-	printf("File sent to server");
+	printf("É TETRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!!!!!!!!!!!\n");
 	fclose(fsend);
 	fclose(frecv);
 
