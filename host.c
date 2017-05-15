@@ -222,8 +222,6 @@ int main(int argc, char* argv[])
 			{
 				if(errno == EAGAIN || errno == EWOULDBLOCK)
 				{
-					// PRECISA FAZER ISSO? RECV PODE GERAR QUALQUER PACOTE,
-					// NÃO APENAS ACKS.
 					fseek(fsend, -blockSize, SEEK_CUR);
 					break;
 				}
@@ -251,11 +249,9 @@ int main(int argc, char* argv[])
 			}
 			if(packet_recv.flags == 128 && packet_recv.length == 0) // É ack?
 			{
-				if(packet_recv.id == (ntohs(packet_send.id))) // É ack esperado?
+				if(packet_recv.id == packet_send.id) // É ack esperado?
 				{
 					// envia o próximo pacote, parando esse loop
-
-					// LAST_ID ALTERA AQUI???
 					last_id == 1 ? (last_id = 0) : (last_id = 1);
 					break; //last_id deve ser alterado.
 				}
