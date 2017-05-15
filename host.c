@@ -189,79 +189,70 @@ int main(int argc, char* argv[])
 	uint8_t buffer[MAXDATASIZE];
 
 	// Enquanto há blocos pra enviar, ou não recebeu último pacote
-	while((blockSize = fread(buffer, sizeof(uint8_t), MAXDATASIZE, fsend)) >= 0 || flagEND != true)
-	{	
+	while((blockSize = fread(buffer, sizeof(uint8_t), MAXDATASIZE, fsend)) > 0 || flagEND != true)
+	{
 		// TRANSMISSOR COMEÇA AQUI
 		if(blockSize >= 0)
 		{
-			printf("1\n");
 			memset(&packet_send, '\0', sizeof(packet_t));
 			packet_send.sync1 = htonl(SYNC);
 			packet_send.sync2 = htonl(SYNC);
 			packet_send.chksum = htons(0);
 			packet_send.length = htons(blockSize);
-			last_id == 1 ? (packet_send.id = htons(0)) : (packet_send.id = htons(1));
-			blockSize == MAXDATASIZE ? (packet_send.flags = htons(0)) : (packet_send.flags = htons(64)); //END -> 64 = b'0100 0000
+			last_id == 1 ? (packet_send.id = 0) : (packet_send.id = 1);//(packet_send.id = htons(0)) : (packet_send.id = htons(1));
+			blockSize == MAXDATASIZE ? (packet_send.flags = 0) : (packet_send.flags = 64);//(packet_send.flags = htons(0)) : (packet_send.flags = htons(64)); //END -> 64 = b'0100 0000
 			memcpy(packet_send.data, &buffer, blockSize);
-			printf("2\n");
 			packet_send.chksum = htons((uint16_t) csum((unsigned short *) &packet_send, sizeof(packet_t)));
-			printf("3\n");
-			printf("%s\n", buffer);
 			if(send(useSocketFD, (packet_t *) &packet_send, sizeof(packet_t), 0) < 0)
 			{
 				fprintf(stderr, "ERROR on sending file. Aborted.\n");
 				exit(1);
 			}
-			printf("4\n");
 		}	
 		// RECEPTOR COMEÇA AQUI.
-		while(flagEND != true) // Enquanto não chega o ack e tem coisa pra receber.
+		// Tudo que eu recebo após o outro lado parar de transmitir serão
+		// acks. Mas tenho que entrar nesse loop pra receber os acks.
+		while(true) // Enquanto não chega o ack e tem coisa pra receber.
 		{
 			struct timeval timeout;
 			timeout.tv_sec = 1; // segundos
 			timeout.tv_usec = 0; // microsegundos
-			printf("5\n");
 			setsockopt(useSocketFD, SOL_SOCKET, SO_RCVTIMEO, (struct timeval *) &timeout, sizeof(struct timeval));
 			if(recv(useSocketFD, (packet_t *) &packet_recv, sizeof(packet_t), 0) < 0)
 			{
 				if(errno == EAGAIN || errno == EWOULDBLOCK)
 				{
 					// PRECISA FAZER ISSO? RECV PODE GERAR QUALQUER PACOTE,
-					// NÂO APENAS ACKS.
+					// NÃO APENAS ACKS.
 					fseek(fsend, -blockSize, SEEK_CUR);
-					break;//continue;
+					break;
 				}
 			}
-			printf("6\n");
-			// Faz isso porque checksum é trsnformado em NBO após calculo.
+			// Faz isso porque checksum é transformado em NBO após calculo.
 			packet_recv.chksum = ntohs(packet_recv.chksum);
 			unsigned short checksum = csum((unsigned short *)&packet_recv, sizeof(packet_t));
 			if(checksum != 0)
 			{
-				fprintf(stderr, "Checksum = %d . Invalid value to checksum. Aborted.\n", checksum);
+				fprintf(stderr, "Checksum received is %d . Invalid value to checksum. Aborted.\n", checksum);
 				exit(1);
 			}
 
-			printf("7\n");
 			packet_recv.sync1 = ntohl(packet_recv.sync1);
 			packet_recv.sync2 = ntohl(packet_recv.sync2);
 			packet_recv.chksum = ntohs(packet_recv.chksum);
 			packet_recv.length = ntohs(packet_recv.length);
-			packet_recv.id = ntohs(packet_recv.id);
-			packet_recv.flags = ntohs(packet_recv.flags);
+			//packet_recv.id = ntohs(packet_recv.id);
+			//packet_recv.flags = ntohs(packet_recv.flags);
 
 			if(packet_recv.sync1 != SYNC || packet_recv.sync2 != SYNC)
 			{
 				fprintf(stderr, "ERROR: packet received is not syncronized\n");
 				exit(1);
 			}
-			printf("8\n");
 			if(packet_recv.flags == 128 && packet_recv.length == 0) // É ack?
 			{
-				printf("9\n");
 				if(packet_recv.id == (ntohs(packet_send.id))) // É ack esperado?
 				{
-					printf("10\n");
 					// envia o próximo pacote, parando esse loop
 
 					// LAST_ID ALTERA AQUI???
@@ -270,7 +261,6 @@ int main(int argc, char* argv[])
 				}
 				else //Se não é o ack esperado
 				{
-					printf("11\n");
 					// Reenvia último pacote
 					fseek(fsend, -blockSize, SEEK_CUR);
 					break; //last_id NÃO deve ser alterado
@@ -278,148 +268,54 @@ int main(int argc, char* argv[])
 			}
 			else // Se não é ack.
 			{
-				printf("12\n");
 				if(packet_recv.id == last_id_recv && packet_recv.chksum == last_chksum_recv) // É o mesmo pacote anterior?
 				{
-					printf("13\n");
 					// reenvia último ack
 					if(send(useSocketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0)
 					{
-						printf("14\n");
 						fprintf(stderr, "ERROR on resending last ack. Errno: %s\n", strerror(errno));
 						exit(1);
 					}
 				}
 				else // Se é pacote novo, escreve no arquivo e envia ack.
 				{
-					printf("15\n");
 					// Escreve no arquivo.
 					int writeSize = fwrite(packet_recv.data, sizeof(uint8_t), packet_recv.length, frecv);
 					if(writeSize < packet_recv.length)
 					{
-						printf("16\n");
 						fprintf(stderr, "ERROR on write in file %s\n", output);
 						exit(1);
 					}
+
 
 					if(packet_recv.flags == 64) // bit END, último pacote recebido.
 					{
 						flagEND = true;
 					}
-
+			
 					// Prepara e envia ACK.
 					memset(&ack, '\0', sizeof(packet_t));
 					ack.sync1 = htonl(SYNC);
 					ack.sync2 = htonl(SYNC);
 					ack.chksum = htons(0);
 					ack.length = htons(0);
-					ack.id = htons(packet_recv.id);
-					ack.flags = htons(128); // ACK flag - 1000 0000
+					ack.id = packet_recv.id;//htons(packet_recv.id);
+					ack.flags = 128;//htons(128); // ACK flag - 1000 0000
 					memset(ack.data, '\0', MAXDATASIZE);
 
 					ack.chksum = htons((uint16_t) csum((unsigned short*) &ack, sizeof(packet_t)));
-					printf("17\n");
 					if(send(useSocketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0)
 					{
-						printf("18\n");
 						fprintf(stderr, "ERROR on sending ack. Errno: %s\n", strerror(errno));
 						exit(1);
 					}
-					printf("19\n");
 					last_id_recv = packet_recv.id;
 					last_chksum_recv = packet_recv.chksum;
 				}
-				printf("20\n");
 			}
-			printf("21\n");
 		}
-		printf("22\n");
-
-		// Tomar cuidado pra não alterar o last_id em alguns casos
-		// se der break no laço anterior.
-		// ACHO QUE TENHO QUE REMOVER ISSO DAQUI:
-		// TALVEZ MUDAR LAST_ID APENAS DEPOIS DE RECEBER ACK.
-		//last_id == 1 ? (last_id = 0) : (last_id = 1);
 	}
-	printf("É TETRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!!!!!!!!!!!\n");
 	fclose(fsend);
 	fclose(frecv);
-
-
-
-//***********************************************************************//
-//***********************************************************************//
-//						CÒDIGO ANTIGO (REFERENCIA)						 //
-//***********************************************************************//
-//***********************************************************************//
-	/*FILE *frecv = fopen(output, "w");
-	if(frecv == NULL)
-	{
-		fprintf(stderr, "ERROR: %s file cannot be opened. Aborted.", output);
-		fclose(frecv);
-		exit(1);
-	}
-	printf("8\n");
-	while(1)
-	{
-		bool flag_end = false;
-		memset(&pacote, '\0', sizeof(packet_t));
-		if(recv(newSocketFD, (packet_t *) &pacote, sizeof(packet_t), 0) < 0)
-		{
-			// Erro de recebimento se negativo. errno é setado.
-			break;
-		}
-
-		unsigned short checksum = csum((unsigned short *)&pacote, sizeof(packet_t));
-
-		pacote.sync1 = ntohl(pacote.sync1);
-		pacote.sync2 = ntohl(pacote.sync2);
-		pacote.chksum = ntohs(pacote.chksum);
-		pacote.length = ntohs(pacote.length);
-		pacote.id = ntohs(pacote.id);
-		pacote.flags = ntohs(pacote.flags);
-
-		if(checksum != 0)
-		{
-			fprintf(stderr, "Checksum não confere, dado corronpido\n");
-			continue;
-		}
-
-		if(pacote.flags == 64) // 0100 0000
-		{
-			// Pacote com bit END ligado
-			flag_end = true;
-		}
-
-		last_id = pacote.id;
-		last_chksum = pacote.chksum;
-
-		int writeSize = fwrite(pacote.data, sizeof(uint8_t), pacote.length, frecv);
-		if(writeSize < pacote.length)
-		{
-			fprintf(stderr, "ERROR on write file\n");
-		}
-		if(flag_end)
-			break;
-
-		// TEM QUE USAR HTONS AQUI!!!
-		memset(&ack, '\0', sizeof(packet_t));
-		ack.sync1 = SYNC;
-		ack.sync2 = SYNC;
-		ack.chksum = 0;
-		ack.length = 0;
-		ack.id = pacote.id;
-		ack.flags = 128; // 1000 0000
-		memset(ack.data, '\0', MAXDATASIZE);
-
-		ack.chksum = htons((uint16_t) csum((unsigned short*) &ack, sizeof(packet_t)));
-			
-		if(send(newSocketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
-		{
-			fprintf(stderr, "ERROR on sending ack. ID: %d\n", ack.id);
-		}
-	}
-	printf("Received from client\n");
-	fclose(frecv);*/
 	return 0;
 }
