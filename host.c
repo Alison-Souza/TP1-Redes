@@ -94,8 +94,8 @@ int main(int argc, char* argv[])
 	char *input = argv[3];
 	char *output = argv[4];
 	packet_t packet_send, packet_recv, pacote, ack;
-	uint8_t last_id = 1;
-	uint16_t last_chksum = 0;
+	uint8_t last_id = 1, last_id_recv = 1;
+	uint16_t last_chksum_recv = 0;
 
 //***********************************************************************//
 //						INICIALIZANDO CONEXOES							 //
@@ -167,14 +167,22 @@ int main(int argc, char* argv[])
 	}
 //***********************************************************************//
 //***********************************************************************//
-//							ENVIANDO DADOS								 //
+//							TRANSMITINDO DADOS							 //
 //***********************************************************************//
 //***********************************************************************//
 	FILE *fsend = fopen(input, "r");
 	if(fsend == NULL)
 	{
-		fprintf(stderr, "ERROR: %s file cannot be opened", input);
+		fprintf(stderr, "ERROR: %s file cannot be opened. Aborted.\n", input);
 		fclose(fsend);
+		exit(1);
+	}
+
+	FILE *frecv = fopen(output, "w");
+	if(frecv == NULL)
+	{
+		fprintf(stderr, "ERROR: %s file cannot be opened. Aborted.\n", output);
+		fclose(frecv);
 		exit(1);
 	}
 
@@ -189,7 +197,7 @@ int main(int argc, char* argv[])
 		packet_send.chksum = htons(0);
 		packet_send.length = htons(blockSize);
 		last_id == 1 ? (packet_send.id = htons(0)) : (packet_send.id = htons(1));
-		blockSize == MAXDATASIZE ? (packet_send.flags = htons(0)) : (packet_send.flags = htons(64)); //64 = b'0100 0000
+		blockSize == MAXDATASIZE ? (packet_send.flags = htons(0)) : (packet_send.flags = htons(64)); //END -> 64 = b'0100 0000
 		memcpy(packet_send.data, &buffer, blockSize);
 		printf("2\n");
 		packet_send.chksum = htons((uint16_t) csum((unsigned short *) &packet_send, sizeof(packet_t)));
@@ -216,24 +224,99 @@ int main(int argc, char* argv[])
 		}
 		printf("6\n");
 
+		packet_recv.sync1 = ntohl(packet_recv.sync1);
+		packet_recv.sync2 = ntohl(packet_recv.sync2);
+		packet_recv.chksum = ntohs(packet_recv.chksum);
+		packet_recv.length = ntohs(packet_recv.length);
 		packet_recv.id = ntohs(packet_recv.id);
-		if(packet_recv.id != (ntohs(packet_send.id))); //if -> while
+		packet_recv.flags = ntohs(packet_recv.flags);
+
+		if(packet_recv.sync1 != SYNC || packet_recv.sync2 != SYNC)
 		{
-			fseek(fsend, -blockSize, SEEK_CUR);
-			continue;
+			fprintf(stderr, "ERROR: packet received is not syncronized\n");
+			exit(1);
+		}
+		
+		while(true) // Enquanto não chega o ack.
+		{
+			if(packet_recv.flags == 128 && packet_recv.length == 0) // É ack?
+			{
+				if(packet_recv.id == (ntohs(packet_send.id))) // É ack esperado?
+				{
+					// envia o próximo pacote, parando esse loop
+
+					// LAST_ID ALTERA AQUI???
+					last_id == 1 ? (last_id = 0) : (last_id = 1);
+					break; //last_id deve ser alterado.
+				}
+				else //Se não é o ack esperado
+				{
+					// Reenvia último pacote
+					fseek(fsend, -blockSize, SEEK_CUR);
+					break; //last_id NÃO deve ser alterado
+				}
+			}
+			else // Se não é ack.
+			{
+				if(packet_recv.id == last_id_recv && packet_recv.chksum == last_chksum_recv) // É o mesmo pacote anterior?
+				{
+					// reenvia último ack
+					// É ESSE SOCKET QUE USA MESMO????
+					if(send(socketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
+					{
+						fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
+					}
+				}
+				else // Se é pacote novo, escreve no arquivo e envia ack.
+				{
+					// Escreve no arquivo.
+					int writeSize = fwrite(packet_recv.data, sizeof(uint8_t), packet_recv.length, frecv);
+					if(writeSize < pacote.length)
+					{
+						fprintf(stderr, "ERROR on write in file %s\n", output);
+						exit(1);
+					}
+
+					// Prepara e envia ACK.
+					memset(&ack, '\0', sizeof(packet_t));
+					ack.sync1 = htonl(SYNC);
+					ack.sync2 = htonl(SYNC);
+					ack.chksum = htons(0);
+					ack.length = htons(0);
+					ack.id = htons(packet_recv.id);
+					ack.flags = htons(128); // ACK flag - 1000 0000
+					memset(ack.data, '\0', MAXDATASIZE);
+
+					ack.chksum = htons((uint16_t) csum((unsigned short*) &ack, sizeof(packet_t)));
+					
+					// É ESSE SOCKET QUE USA MESMO????
+					if(send(socketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
+					{
+						fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
+						exit(1);
+					}
+
+					last_chksum_recv = packet_recv.chksum;
+				}
+			}
 		}
 		printf("7\n");
 
-		last_id == 1 ? (last_id = 0) : (last_id = 1);
+		// Tomar cuidado pra não alterar o last_id em alguns casos
+		// se der break no laço anterior.
+		// ACHO QUE TENHO QUE REMOVER ISSO DAQUI:
+		// TALVEZ MUDAR LAST_ID APENAS DEPOIS DE RECEBER ACK.
+		//last_id == 1 ? (last_id = 0) : (last_id = 1);
 	}
 	printf("File sent to server");
 	fclose(fsend);
+	fclose(frecv);
 //***********************************************************************//
 //***********************************************************************//
 //							RECEBENDO DADOS								 //
 //***********************************************************************//
 //***********************************************************************//
-	FILE *frecv = fopen(output, "w");
+	/*FILE *frecv = fopen(output, "w");
 	if(frecv == NULL)
 	{
 		fprintf(stderr, "ERROR: %s file cannot be opened. Aborted.", output);
@@ -316,6 +399,6 @@ int main(int argc, char* argv[])
 		}
 	}
 	printf("Received from client\n");
-	fclose(frecv);
+	fclose(frecv);*/
 	return 0;
 }
