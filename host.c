@@ -93,7 +93,7 @@ int main(int argc, char* argv[])
 	struct sockaddr_in local_addr, remote_addr;
 	char *input = argv[3];
 	char *output = argv[4];
-	packet_t pacote, ack;
+	packet_t packet_send, packet_recv, pacote, ack;
 	uint8_t last_id = 1;
 	uint16_t last_chksum = 0;
 
@@ -108,7 +108,7 @@ int main(int argc, char* argv[])
 		exit(1);
 	}
 
-	// SE CONEXÃO É PASSIVA (SERVIDOR - RECEPTOR).
+	// SE CONEXÃO É PASSIVA (SERVIDOR/RECEPTOR).
 	if(strcmp(argv[1], "-s") == 0)
 	{
 		socklen_t sockSize;
@@ -144,7 +144,7 @@ int main(int argc, char* argv[])
 			exit(1);
 		}
 	}
-	// SE CONEXAO É ATIVA (CLIENTE - TRANSMISSOR).
+	// SE CONEXAO É ATIVA (CLIENTE/TRANSMISSOR).
 	else if(strcmp(argv[1], "-c") == 0)
 	{
 		char *ip, *port;
@@ -153,7 +153,6 @@ int main(int argc, char* argv[])
 		port = strtok(NULL, " ");
 		
 		portNum = atoi(port);
-		//local ou remote????
 		memset((char*) &local_addr, '\0', sizeof(struct sockaddr));
 		local_addr.sin_family = AF_INET;
 		local_addr.sin_port = htons(portNum);
@@ -184,18 +183,19 @@ int main(int argc, char* argv[])
 
 	while((blockSize = fread(buffer, sizeof(uint8_t), MAXDATASIZE, fsend)) >= 0)
 	{	printf("1\n");
-		memset(&pacote, '\0', sizeof(packet_t));
-		pacote.sync1 = htonl(SYNC);
-		pacote.sync2 = htonl(SYNC);
-		pacote.chksum = htons(0);
-		pacote.length = htons(blockSize);
-		last_id == 1 ? (pacote.id = htons(0)) : (pacote.id = htons(1));
-		blockSize == MAXDATASIZE ? (pacote.flags = htons(0)) : (pacote.flags = htons(64)); //64 = b'0100 0000
-		memcpy(pacote.data, &buffer, blockSize);
+		memset(&packet_send, '\0', sizeof(packet_t));
+		packet_send.sync1 = htonl(SYNC);
+		packet_send.sync2 = htonl(SYNC);
+		packet_send.chksum = htons(0);
+		packet_send.length = htons(blockSize);
+		last_id == 1 ? (packet_send.id = htons(0)) : (packet_send.id = htons(1));
+		blockSize == MAXDATASIZE ? (packet_send.flags = htons(0)) : (packet_send.flags = htons(64)); //64 = b'0100 0000
+		memcpy(packet_send.data, &buffer, blockSize);
 		printf("2\n");
-		pacote.chksum = htons((uint16_t) csum((unsigned short *) &pacote, sizeof(packet_t)));
+		packet_send.chksum = htons((uint16_t) csum((unsigned short *) &packet_send, sizeof(packet_t)));
 		printf("3\n");
-		if(send(socketFD, (packet_t *) &pacote, sizeof(packet_t), 0) < 0)
+		printf("%s\n", buffer);
+		if(send(socketFD, (packet_t *) &packet_send, sizeof(packet_t), 0) < 0)
 		{
 			fprintf(stderr, "ERROR on sending file. Aborted.\n");
 			exit(1);
@@ -206,7 +206,7 @@ int main(int argc, char* argv[])
 		timeout.tv_usec = 0; // microsegundos
 		printf("5\n");
 		setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, (struct timeval *) &timeout, sizeof(struct timeval));
-		if(recv(socketFD, (packet_t *) &ack, sizeof(packet_t), 0) < 0)
+		if(recv(socketFD, (packet_t *) &packet_recv, sizeof(packet_t), 0) < 0)
 		{
 			if(errno == EAGAIN || errno == EWOULDBLOCK)
 			{
@@ -216,8 +216,8 @@ int main(int argc, char* argv[])
 		}
 		printf("6\n");
 
-		ack.id = ntohs(ack.id);
-		if(ack.id != (ntohs(pacote.id)));
+		packet_recv.id = ntohs(packet_recv.id);
+		if(packet_recv.id != (ntohs(packet_send.id))); //if -> while
 		{
 			fseek(fsend, -blockSize, SEEK_CUR);
 			continue;
