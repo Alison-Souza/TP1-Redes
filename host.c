@@ -89,7 +89,7 @@ int main(int argc, char* argv[])
 //						INICIALIZANDO VARIAVEIS							 //
 //***********************************************************************//
 
-	int socketFD, newSocketFD, portNum;
+	int socketFD, newSocketFD, useSocketFD, portNum;
 	struct sockaddr_in local_addr, remote_addr;
 	char *input = argv[3];
 	char *output = argv[4];
@@ -138,6 +138,8 @@ int main(int argc, char* argv[])
 			fprintf(stderr, "ERROR on accept connection.\n");
 			exit(1);
 		}
+
+		useSocketFD = newSocketFD;
 	}
 	// SE CONEXAO É ATIVA (CLIENTE/TRANSMISSOR).
 	else if(strcmp(argv[1], "-c") == 0)
@@ -159,6 +161,8 @@ int main(int argc, char* argv[])
 			fprintf(stderr, "ERROR: Failed to connect. %s\n", strerror(errno));
 			exit(1);
 		}
+
+		useSocketFD = socketFD;
 	}
 //***********************************************************************//
 //***********************************************************************//
@@ -198,56 +202,27 @@ int main(int argc, char* argv[])
 		packet_send.chksum = htons((uint16_t) csum((unsigned short *) &packet_send, sizeof(packet_t)));
 		printf("3\n");
 		printf("%s\n", buffer);
-		if(strcmp(argv[1], "-s") == 0)
+		if(send(useSocketFD, (packet_t *) &packet_send, sizeof(packet_t), 0) < 0)
 		{
-			if(send(newSocketFD, (packet_t *) &packet_send, sizeof(packet_t), 0) < 0)
-			{
-				fprintf(stderr, "ERROR on sending file. Aborted.\n");
-				exit(1);
-			}
-		}
-		else if(strcmp(argv[1], "-c") == 0)
-		{
-			if(send(socketFD, (packet_t *) &packet_send, sizeof(packet_t), 0) < 0)
-			{
-				fprintf(stderr, "ERROR on sending file. Aborted.\n");
-				exit(1);
-			}
+			fprintf(stderr, "ERROR on sending file. Aborted.\n");
+			exit(1);
 		}
 		printf("4\n");
 		struct timeval timeout;
 		timeout.tv_sec = 1; // segundos
 		timeout.tv_usec = 0; // microsegundos
 		printf("5\n");
-		if(strcmp(argv[1], "-s") == 0) setsockopt(newSocketFD, SOL_SOCKET, SO_RCVTIMEO, (struct timeval *) &timeout, sizeof(struct timeval));
-		else if(strcmp(argv[1], "-c") == 0) setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, (struct timeval *) &timeout, sizeof(struct timeval));
-		if(strcmp(argv[1], "-s") == 0)
+		setsockopt(useSocketFD, SOL_SOCKET, SO_RCVTIMEO, (struct timeval *) &timeout, sizeof(struct timeval));
+		if(recv(useSocketFD, (packet_t *) &packet_recv, sizeof(packet_t), 0) < 0)
 		{
-			if(recv(newSocketFD, (packet_t *) &packet_recv, sizeof(packet_t), 0) < 0)
+			if(errno == EAGAIN || errno == EWOULDBLOCK)
 			{
-				if(errno == EAGAIN || errno == EWOULDBLOCK)
-				{
-					// PRECISA FAZER ISSO? RECV PODE GERAR QUALQUER PACOTE,
-					// NÂO APENAS ACKS.
-					fseek(fsend, -blockSize, SEEK_CUR);
-					continue;
-				}
+				// PRECISA FAZER ISSO? RECV PODE GERAR QUALQUER PACOTE,
+				// NÂO APENAS ACKS.
+				fseek(fsend, -blockSize, SEEK_CUR);
+				continue;
 			}
 		}
-		else if(strcmp(argv[1], "-c") == 0)
-		{
-			if(recv(socketFD, (packet_t *) &packet_recv, sizeof(packet_t), 0) < 0)
-			{
-				if(errno == EAGAIN || errno == EWOULDBLOCK)
-				{
-					// PRECISA FAZER ISSO? RECV PODE GERAR QUALQUER PACOTE,
-					// NÂO APENAS ACKS.
-					fseek(fsend, -blockSize, SEEK_CUR);
-					continue;
-				}
-			}
-		}
-		
 		printf("6\n");
 
 		packet_recv.sync1 = ntohl(packet_recv.sync1);
@@ -288,22 +263,11 @@ int main(int argc, char* argv[])
 				if(packet_recv.id == last_id_recv && packet_recv.chksum == last_chksum_recv) // É o mesmo pacote anterior?
 				{
 					// reenvia último ack
-					// É ESSE SOCKET QUE USA MESMO????
-					if(strcmp(argv[1], "-s") == 0)
+					if(send(useSocketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
 					{
-						if(send(newSocketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
-						{
-							fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
-						}
+						fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
+						exit(1);
 					}
-					else if(strcmp(argv[1], "-c") == 0)
-					{
-						if(send(socketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
-						{
-							fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
-						}
-					}
-						
 				}
 				else // Se é pacote novo, escreve no arquivo e envia ack.
 				{
@@ -327,20 +291,10 @@ int main(int argc, char* argv[])
 
 					ack.chksum = htons((uint16_t) csum((unsigned short*) &ack, sizeof(packet_t)));
 					
-					// É ESSE SOCKET QUE USA MESMO????
-					if(strcmp(argv[1], "-s") == 0)
+					if(send(useSocketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0)
 					{
-						if(send(newSocketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
-						{
-							fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
-						}
-					}
-					else if(strcmp(argv[1], "-c") == 0)
-					{
-						if(send(socketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
-						{
-							fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
-						}
+						fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
+						exit(1);
 					}
 
 					last_chksum_recv = packet_recv.chksum;
@@ -358,9 +312,12 @@ int main(int argc, char* argv[])
 	printf("File sent to server");
 	fclose(fsend);
 	fclose(frecv);
+
+
+
 //***********************************************************************//
 //***********************************************************************//
-//							RECEBENDO DADOS								 //
+//						CÒDIGO ANTIGO (REFERENCIA)						 //
 //***********************************************************************//
 //***********************************************************************//
 	/*FILE *frecv = fopen(output, "w");
