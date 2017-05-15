@@ -111,8 +111,6 @@ int main(int argc, char* argv[])
 	// SE CONEXÃO É PASSIVA (SERVIDOR/RECEPTOR).
 	if(strcmp(argv[1], "-s") == 0)
 	{
-		socklen_t sockSize;
-
 		portNum = atoi(argv[2]);
 		memset((char*) &local_addr, '\0', sizeof(local_addr));
 		local_addr.sin_family = AF_INET;
@@ -126,16 +124,13 @@ int main(int argc, char* argv[])
 			exit(1);
 		}
 
-		// Fala para o socket "escutar" LISTENQUEUESIZE conexões,
-		// inserindo elas em uma fila até que o accept() aceite a 
-		// conexão.
 		if(listen(socketFD, 1) < 0)
 		{
 			fprintf(stderr, "ERROR on listen port.\n");
 			exit(1);
 		}
 
-		sockSize = sizeof(struct sockaddr_in);
+		socklen_t sockSize = sizeof(struct sockaddr_in);
 
 		newSocketFD = accept(socketFD, (struct sockaddr *) &remote_addr, &sockSize);
 		if(newSocketFD < 0)
@@ -203,25 +198,56 @@ int main(int argc, char* argv[])
 		packet_send.chksum = htons((uint16_t) csum((unsigned short *) &packet_send, sizeof(packet_t)));
 		printf("3\n");
 		printf("%s\n", buffer);
-		if(send(socketFD, (packet_t *) &packet_send, sizeof(packet_t), 0) < 0)
+		if(strcmp(argv[1], "-s") == 0)
 		{
-			fprintf(stderr, "ERROR on sending file. Aborted.\n");
-			exit(1);
+			if(send(newSocketFD, (packet_t *) &packet_send, sizeof(packet_t), 0) < 0)
+			{
+				fprintf(stderr, "ERROR on sending file. Aborted.\n");
+				exit(1);
+			}
+		}
+		else if(strcmp(argv[1], "-c") == 0)
+		{
+			if(send(socketFD, (packet_t *) &packet_send, sizeof(packet_t), 0) < 0)
+			{
+				fprintf(stderr, "ERROR on sending file. Aborted.\n");
+				exit(1);
+			}
 		}
 		printf("4\n");
 		struct timeval timeout;
 		timeout.tv_sec = 1; // segundos
 		timeout.tv_usec = 0; // microsegundos
 		printf("5\n");
-		setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, (struct timeval *) &timeout, sizeof(struct timeval));
-		if(recv(socketFD, (packet_t *) &packet_recv, sizeof(packet_t), 0) < 0)
+		if(strcmp(argv[1], "-s") == 0) setsockopt(newSocketFD, SOL_SOCKET, SO_RCVTIMEO, (struct timeval *) &timeout, sizeof(struct timeval));
+		else if(strcmp(argv[1], "-c") == 0) setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, (struct timeval *) &timeout, sizeof(struct timeval));
+		if(strcmp(argv[1], "-s") == 0)
 		{
-			if(errno == EAGAIN || errno == EWOULDBLOCK)
+			if(recv(newSocketFD, (packet_t *) &packet_recv, sizeof(packet_t), 0) < 0)
 			{
-				fseek(fsend, -blockSize, SEEK_CUR);
-				continue;
+				if(errno == EAGAIN || errno == EWOULDBLOCK)
+				{
+					// PRECISA FAZER ISSO? RECV PODE GERAR QUALQUER PACOTE,
+					// NÂO APENAS ACKS.
+					fseek(fsend, -blockSize, SEEK_CUR);
+					continue;
+				}
 			}
 		}
+		else if(strcmp(argv[1], "-c") == 0)
+		{
+			if(recv(socketFD, (packet_t *) &packet_recv, sizeof(packet_t), 0) < 0)
+			{
+				if(errno == EAGAIN || errno == EWOULDBLOCK)
+				{
+					// PRECISA FAZER ISSO? RECV PODE GERAR QUALQUER PACOTE,
+					// NÂO APENAS ACKS.
+					fseek(fsend, -blockSize, SEEK_CUR);
+					continue;
+				}
+			}
+		}
+		
 		printf("6\n");
 
 		packet_recv.sync1 = ntohl(packet_recv.sync1);
@@ -237,6 +263,7 @@ int main(int argc, char* argv[])
 			exit(1);
 		}
 		
+		// RECEPTOR COMEÇA AQUI.
 		while(true) // Enquanto não chega o ack.
 		{
 			if(packet_recv.flags == 128 && packet_recv.length == 0) // É ack?
@@ -262,10 +289,21 @@ int main(int argc, char* argv[])
 				{
 					// reenvia último ack
 					// É ESSE SOCKET QUE USA MESMO????
-					if(send(socketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
+					if(strcmp(argv[1], "-s") == 0)
 					{
-						fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
+						if(send(newSocketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
+						{
+							fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
+						}
 					}
+					else if(strcmp(argv[1], "-c") == 0)
+					{
+						if(send(socketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
+						{
+							fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
+						}
+					}
+						
 				}
 				else // Se é pacote novo, escreve no arquivo e envia ack.
 				{
@@ -290,10 +328,19 @@ int main(int argc, char* argv[])
 					ack.chksum = htons((uint16_t) csum((unsigned short*) &ack, sizeof(packet_t)));
 					
 					// É ESSE SOCKET QUE USA MESMO????
-					if(send(socketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
+					if(strcmp(argv[1], "-s") == 0)
 					{
-						fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
-						exit(1);
+						if(send(newSocketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
+						{
+							fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
+						}
+					}
+					else if(strcmp(argv[1], "-c") == 0)
+					{
+						if(send(socketFD, (packet_t*) &ack, sizeof(packet_t), 0) < 0);
+						{
+							fprintf(stderr, "ERROR on sending ack. ACK.ID: %d\n", ack.id);
+						}
 					}
 
 					last_chksum_recv = packet_recv.chksum;
